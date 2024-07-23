@@ -141,11 +141,11 @@ def configure_microlensing_event_parameters(parameters: dict, stars_table: table
                 p_select = np.random.choice(p, size=n_events, replace=False)
                 microlens_parameters['u0_stars'].append([u0, p_select])
 
-            for psel in p_select:
-                ra = cat['ra'][psel]
-                dec = cat['dec'][psel]
-                mag = stars_table['W146'][psel]
-                f.write(f'{psel} {ra} {dec} {mag} {u0}\n')
+                for psel in p_select:
+                    ra = cat['ra'][psel]
+                    dec = cat['dec'][psel]
+                    mag = stars_table['W146'][psel]
+                    f.write(f'{psel} {ra} {dec} {mag} {u0}\n')
 
     return microlens_parameters
 
@@ -216,7 +216,7 @@ def simulate_args(ra: float, dec: float, filename: str) -> argparse.Namespace:
 
 
 def make_image(delta_t: float, file_root: str, star_table: table.Table, ra: float, dec: float,
-               dither_rms_pixels: float = 0.0, microlensing_event_parameters: (type(None) | dict) = None) -> None:
+               dither_rms_pixels: float = 0.0, microlensing_event_parameters: dict = None) -> None:
     """Make a single image with romanisim."""
 
     cat = synthpop_to_romanisim(star_table, delta_t)
