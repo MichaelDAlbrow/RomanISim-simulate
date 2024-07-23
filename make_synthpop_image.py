@@ -142,9 +142,9 @@ def configure_microlensing_event_parameters(parameters: dict, stars_table: table
                 microlens_parameters['u0_stars'].append([u0, p_select])
 
             for psel in p_select:
-                ra = cat['ra'][p_select]
-                dec = cat['dec'][p_select]
-                mag = stars_table['W146'][p_select]
+                ra = cat['ra'][psel]
+                dec = cat['dec'][psel]
+                mag = stars_table['W146'][psel]
                 f.write(f'{psel} {ra} {dec} {mag} {u0}\n')
 
     return microlens_parameters
