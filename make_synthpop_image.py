@@ -32,17 +32,16 @@ Prepare a synthpop json configuration file similar to
   }
 }
 
-This is more-or-less the same as a standard synthpop config file, except only the
-first l_set and b_set elements will be considered, and you need to provide a
-delta_t_minutes specification of the number of images and their cadence.
+This is more-or-less the same as a standard synthpop config file, except only
+the first l_set and b_set elements will be considered, and you need to provide
+a delta_t_minutes specification of the number of images and their cadence.
 
 The final field, "microlensing_event_parameters", if provided, is used to configure
 PSPL microlensing events to be injected into random stars.
 
 One output image is made for each epoch.
 
-If your config file is config.json, Run this script with
-python make_synthpop_image.py config.json
+If your config file is config.json, Run this script with python make_synthpop_image.py config.json
 
 """
 
@@ -70,15 +69,12 @@ from romanisim import log, wcs, persistence, parameters
 from romanisim import ris_make_utils as ris
 from asdf_to_fits import asdf_to_fits
 
-# To profile the romanISIM code
-# import cProfile
-
 #  Uncomment and edit if necessary
 sys.path.append('/Users/mda45/Packages/synthpop-main')
 
 # For parallel processing. Set this to 1 if you don't want parallel processing.
 # max_parallel_processes = 1
-max_parallel_processes = np.min([200, os.cpu_count()])
+max_parallel_processes = int(os.cpu_count()/2)
 
 # These offsets shift the synthpop field to the approximate centre of SCA 1.
 coordinate_offset = {'ra': 0.0655 * u.degree, 'dec': 0.0459 * u.degree}
@@ -222,8 +218,7 @@ def make_image(delta_t: float, file_root: str, star_table: table.Table, ra: floa
     cat = synthpop_to_romanisim(star_table, delta_t)
 
     if microlensing_event_parameters is not None:
-        cat = insert_microlensing_events(cat, delta_t, microlensing_event_parameters)
-
+        cat = insert_microlensing_events(cat, delta_t*60*24*365.25, microlensing_event_parameters)
     rng = UniformDeviate(None)
 
     # Random dither
@@ -304,14 +299,7 @@ if __name__ == '__main__':
 
     else:
 
-        # Uncomment for code profiling
-        # pr = cProfile.Profile()
-        # pr.enable()
-
         for i, t in enumerate(t_years):
             make_image(t, f'{config_data["name_for_output"]}_t{i:04d}', synthpop_table, ra_rom.value, dec_rom.value,
                        dither_rms_pixels=1.0, microlensing_event_parameters=ulens_parameters)
 
-        # Uncomment for code profiling
-        # pr.disable()
-        # pr.print_stats(sort='cumtime')

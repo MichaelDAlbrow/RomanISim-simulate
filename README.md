@@ -41,6 +41,7 @@ can find your synthpop installation directory.
 
 Prepare a synthpop json configuration file similar to
 
+```json
 {
     "model_base_name" : "my_generated_model",
     "l_set" : [0],
@@ -58,6 +59,7 @@ Prepare a synthpop json configuration file similar to
         "t0_mins" : 2160
   }
 }
+```
 
 This is more-or-less the same as a standard synthpop config file, except only the
 first l_set and b_set elements will be considered, and you need to provide a

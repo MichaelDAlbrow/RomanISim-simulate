@@ -3,12 +3,11 @@ Convert an asdf image file to fits format.
 
 Basic code from Andrea Bellini via Matthew Penny.
 
-Michael Albrow
+Michael Albrow.
 """
 
 import sys
 import numpy as np
-import astropy
 from astropy.io import fits
 import roman_datamodels as rdm
 
@@ -20,10 +19,10 @@ def asdf_to_fits(asdf_file: str, fits_file: (str, type(None)) = None) -> None:
     err = np.array(imagehandler.err)
     dq = np.array(imagehandler.dq)
 
-    # header info
+    # Header info
     print(imagehandler.meta)
 
-    # saving the wcs info
+    # Saving the wcs info
     wcs_info = imagehandler.meta.wcs.to_fits(bounding_box=((0, 4095), (0, 4095)))
 
     # Converting the output into a ds9 readable format for quick visual inspection
