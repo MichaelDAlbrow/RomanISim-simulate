@@ -128,11 +128,12 @@ def configure_microlensing_event_parameters(parameters: dict, stars_table: table
 
     with open(out_file, 'w') as f:
 
+        microlens_parameters['u0_stars'] = []
+
         for m1, m2 in zip(parameters['mag_bin_edges'][:-1], parameters['mag_bin_edges'][1:]):
 
             p = np.where((m1 < stars_table['W146']) & (stars_table['W146'] <= m2))[0]
 
-            microlens_parameters['u0_stars'] = []
             for n_events, u0 in parameters['events_u0_per_mag_bin']:
                 p_select = np.random.choice(p, size=n_events, replace=False)
                 microlens_parameters['u0_stars'].append([u0, p_select])
