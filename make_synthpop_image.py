@@ -14,32 +14,70 @@ can find your synthpop installation directory.
 
 Prepare a synthpop json configuration file similar to
 
-{
-    "model_base_name" : "my_generated_model",
-    "l_set" : [0],
-    "b_set" : [-1],
-    "solid_angle" : 3e-3,
-    "model_name" : "besancon_Robin2003",
-    "evolution_class" : {"name" : "MIST", "interpolator" : "CharonInterpolator"},
-    "extinction_map_kwargs" : {"name":"Marshall"},
-    "extinction_law_kwargs" : {"name":"ODonnellCardelli"},
-    "delta_t_minutes" :  [100, 15],
-    "microlensing_event_parameters" : {
-        "mag_bin_edges" : [20, 21, 22, 23, 24, 25, 26],
-        "events_u0_per_mag_bin" : [[20, 0.1], [20, 0.01]],
-        "t_E_mins" : 288,
-        "t0_mins" : 2160
-  }
+{   "SEED":{"random_seed":null},
+
+    "MANDATORY":{
+        "#comment1": "directory and base for the output files",
+        "model_name":"Huston2025",
+        "#comment2": "directory containing population json files",
+        "name_for_output":"Huston2025"
+    },
+
+    "SIGHTLINES":
+        {
+            "l_set": [0.5], "l_set_type":"list",
+            "b_set":[1.5], "b_set_type":"list",
+            "solid_angle": 2.7e-2, "solid_angle_unit": "deg^2"
+        },
+
+    "EXTINCTION_MAP":
+        {
+        "extinction_map_kwargs": {"name":"Surot", "project_3d":true, "dist_2d":8.15},
+        "extinction_law_kwargs": [{"name":"SODC", "R_V":2.5}]
+        },
+
+    "POPULATION_GENERATION":{
+        "skip_lowmass_stars": false
+    },
+
+    "PHOTOMETRIC_OUTPUTS":{
+        "maglim":["W146", 99, "keep"],
+        "chosen_bands": ["R062","Z087","Y106","J129","W146","H158","F184", "Bessell_U", "Bessell_B", "Bessell_V", "Bessell_R", "Bessell_I", "VISTA_J", "VISTA_H", "VISTA_Ks"]
+    },
+
+    "OUTPUT":{
+        "post_processing_kwargs": [{"name":"ProcessDarkCompactObjects", "remove":false},
+                {"name":"ConvertMistMags", "conversions":{"AB": ["R062", "Z087", "Y106", "J129", "W146", "H158", "F184"]}},
+                {"name":"RenameColumns",
+                    "old_names":["log_L", "log_Teff", "log_g", "[Fe/H]","log_R"],
+                    "new_names":["logL", "logTeff", "logg" ,"Fe/H_evolved","log_radius"]}],
+
+        "output_location":"outputfiles/lens",
+        "output_filename_pattern": "{name_for_output}_l{l_deg:.3f}_b{b_deg:.3f}",
+
+        "overwrite": true
+    },
+
+    "IMAGES": {
+        "delta_t_minutes": [2, 15]
+        },
+
+    "MICROLENSING": {
+        "microlensing_event_parameters": {
+            "mag_bin_edges": [20, 21, 22, 23, 24, 25, 26]},
+            "events_u0_per_mag_bin": [[200, 0.1], [200, 0.01], [200, 0.001]],
+            "t_E_mins": 400,
+            "t0_mins": 2160
+        }
 }
 
 This is more-or-less the same as a standard synthpop config file, except only
 the first l_set and b_set elements will be considered, and you need to provide
 a delta_t_minutes specification of the number of images and their cadence.
+One output image is made for each epoch.
 
 The final field, "microlensing_event_parameters", if provided, is used to configure
 PSPL microlensing events to be injected into random stars.
-
-One output image is made for each epoch.
 
 If your config file is config.json, Run this script with python make_synthpop_image.py config.json
 
@@ -48,13 +86,21 @@ If your config file is config.json, Run this script with python make_synthpop_im
 __author__ = "Michael Albrow"
 
 # Point this to your synthpop output directory
-output_dir_root = '/scratch/mda45/synthpop-data/outputfiles/'
+# For kerr
+output_dir_root = '/home/users/mda45/local/data/synthpop/outputfiles/'
+# For rch
+#output_dir_root = '/home/mda45/synthpop/synthpop_data/outputfiles/'
+
+
+
 
 # Modules we will need
 import sys
 import os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 from copy import deepcopy
 from functools import partial
+from contextlib import redirect_stdout
 import numpy as np
 import pandas as pd
 import argparse
@@ -65,19 +111,26 @@ from astropy.coordinates import SkyCoord, Galactic, FK5
 import json
 import synthpop
 from galsim import UniformDeviate
-from romanisim import log, wcs, persistence, parameters
+from romanisim import wcs, persistence, parameters
 from romanisim import ris_make_utils as ris
 from asdf_to_fits import asdf_to_fits
 
-#  Uncomment and edit if necessary
-sys.path.append('/Users/mda45/Packages/synthpop-main')
-
-# For parallel processing. Set this to 1 if you don't want parallel processing.
-# max_parallel_processes = 1
-max_parallel_processes = int(os.cpu_count()/2)
+MAX_PARALLEL_PROCESSES = int(os.cpu_count() / 2)
 
 # These offsets shift the synthpop field to the approximate centre of SCA 1.
-coordinate_offset = {'ra': 0.0655 * u.degree, 'dec': 0.0459 * u.degree}
+COORDINATE_OFFSET_RA_DEG = 0.0655
+COORDINATE_OFFSET_DEC_DEG = 0.0459
+
+ROMAN_PIXEL_ARCSEC_PER_PIXEL = 0.11
+
+MINUTES_PER_DAY = 60 * 24
+DAYS_PER_YEAR = 365.25
+MINUTES_PER_YEAR = MINUTES_PER_DAY * DAYS_PER_YEAR
+
+DEFAULT_BANDPASS = "F146"
+DEFAULT_SCA = 1
+DEFAULT_DATE = "2000-03-30T00:00:00"
+DEFAULT_MA_TABLE_NUMBER = 4
 
 
 def synthpop_to_romanisim(t: table.Table, delta_t_years: float,
@@ -93,6 +146,7 @@ def synthpop_to_romanisim(t: table.Table, delta_t_years: float,
 
     c = SkyCoord(l=t['l'] * u.degree,
                  b=t['b'] * u.degree,
+                 distance=t['Dist'] * u.kpc,
                  pm_l_cosb=t['mul'] * u.mas / u.year,
                  pm_b=t['mub'] * u.mas / u.year,
                  frame=Galactic)
@@ -123,26 +177,43 @@ def configure_microlensing_event_parameters(parameters: dict, stars_table: table
     """Select stars for microlensing and add to parameters dict."""
 
     microlens_parameters = deepcopy(parameters)
+    microlens_parameters['u0_stars'] = []
 
     cat = synthpop_to_romanisim(stars_table, 0.0)
 
-    with open(out_file, 'w') as f:
+    try:
+        ulens_stars = np.loadtxt(out_file)
+        for line in ulens_stars:
+            microlens_parameters['u0_stars'].append([line[4], int(line[0])])
 
-        microlens_parameters['u0_stars'] = []
+    except FileNotFoundError:
 
-        for m1, m2 in zip(parameters['mag_bin_edges'][:-1], parameters['mag_bin_edges'][1:]):
+        print(f"ulens file {out_file} not found. Creating ...")
 
-            p = np.where((m1 < stars_table['W146']) & (stars_table['W146'] <= m2))[0]
+        with open(out_file, 'w') as f:
 
-            for n_events, u0 in parameters['events_u0_per_mag_bin']:
-                p_select = np.random.choice(p, size=n_events, replace=False)
-                microlens_parameters['u0_stars'].append([u0, p_select])
+            for m1, m2 in zip(parameters['mag_bin_edges'][:-1], parameters['mag_bin_edges'][1:]):
 
-                for psel in p_select:
-                    ra = cat['ra'][psel]
-                    dec = cat['dec'][psel]
-                    mag = stars_table['W146'][psel]
-                    f.write(f'{psel} {ra} {dec} {mag} {u0}\n')
+                p = np.where((m1 < stars_table['W146']) & (stars_table['W146'] <= m2))[0]
+
+                print(f'{len(p)} stars with mags between {m1} and {m2}')
+
+                print('events_u0_per_mag_bin', parameters['events_u0_per_mag_bin'])
+                for n_events, u0 in parameters['events_u0_per_mag_bin']:
+                    size_select = min(n_events, len(p))
+                    print(f'Selecting {size_select} events')
+
+                    if size_select > 0:
+                        p_select = np.random.choice(p, size=n_events, replace=False)
+                        microlens_parameters['u0_stars'].append([u0, p_select])
+                        for psel in p_select:
+                            ra = cat['ra'][psel]
+                            dec = cat['dec'][psel]
+                            mag = stars_table['W146'][psel]
+                            print(f'{psel}: {ra}, {dec}, {mag} {u0}')
+                            f.write(f'{psel} {ra} {dec} {mag} {u0}\n')
+                    else:
+                        microlens_parameters["u0_stars"].append([u0, []])
 
     return microlens_parameters
 
@@ -150,11 +221,12 @@ def configure_microlensing_event_parameters(parameters: dict, stars_table: table
 def insert_microlensing_events(cat: table.table, t: float, event_params: dict) -> table.table:
     """Insert microlensing events into selected stars in the catalogue."""
 
-    tau2 = ((t - event_params['t0_mins']) / event_params['t_E_mins'])**2
+    t_mins = t * MINUTES_PER_YEAR
+    tau2 = ((t_mins - event_params['t0_mins']) / event_params['t_E_mins'])**2
 
     for u0, stars in event_params['u0_stars']:
         u = np.sqrt(u0**2 + tau2)
-        for star in stars:
+        for star in np.atleast_1d(stars):
             cat[star]['F146'] = cat[star]['F146'] * (u**2 + 2.0) / (u*np.sqrt(u**2 + 4.0))
 
     return cat
@@ -169,7 +241,7 @@ def simulate_args(ra: float, dec: float, filename: str) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description='Make a demo image.',
         epilog='EXAMPLE: %(prog)s output_image.asdf',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
     parser.add_argument('--filename', type=str, help='output image (asdf)')
     parser.add_argument('--bandpass', type=str, help='bandpass to simulate',
                         default='F087')
@@ -184,7 +256,7 @@ def simulate_args(ra: float, dec: float, filename: str) -> argparse.Namespace:
                         help='UTC Date and Time of observation to simulate in ISOT format.')
     parser.add_argument('--level', type=int, default=2,
                         help='1 or 2, for L1 or L2 output')
-    parser.add_argument('--ma_table_number', type=int, default=1)
+    parser.add_argument('--ma_table_number', type=int, default=DEFAULT_MA_TABLE_NUMBER)
     parser.add_argument('--nobj', type=int, default=1000)
     parser.add_argument('--previous', default=None, type=str,
                         help=('previous simulated file in chronological order '
@@ -197,110 +269,179 @@ def simulate_args(ra: float, dec: float, filename: str) -> argparse.Namespace:
     parser.add_argument('--sca', type=int, default=7, help='SCA to simulate')
     parser.add_argument('--usecrds', action='store_true',
                         help='Use CRDS for distortion map')
-    parser.add_argument('--webbpsf', action='store_true',
-                        help='Use webbpsf for PSF')
+    parser.add_argument('--stpsf', action='store_true',
+                        help='Use stpsf for PSF')
     parser.add_argument('--truncate', type=int, default=None, help=(
         'If set, truncate the MA table at given number of resultants.'))
+    parser.add_argument('--pretend-spectral', type=str, default=None, help=(
+        'Pretend the image is spectral.  exposure.type and instrument.element '
+        'are updated to be grism / prism.'))
+    parser.add_argument('--drop-extra-dq', default=False, action='store_true',
+                        help=('Do not store the optional simulated dq array.'))
+    parser.add_argument('--scale-factor', type=float, default=-1.,
+                        help=(
+                            'Velocity aberration-induced scale factor. If negative, use given time to calculated based on orbit ephemeris.'))
 
     args = parser.parse_args(['--radec', f'{ra}', f'{dec}',
-                              '--webbpsf',
+                              '--stpsf',
                               '--filename', filename,
-                              '--date', '2000-03-30T00:00:00',
-                              '--sca', '1',
-                              '--bandpass', 'F146'])
+                              '--date', DEFAULT_DATE,
+                              '--sca', f"{DEFAULT_SCA}",
+                              '--bandpass', DEFAULT_BANDPASS])
 
     return args
 
 
-def make_image(delta_t: float, file_root: str, star_table: table.Table, ra: float, dec: float,
-               dither_rms_pixels: float = 0.0, microlensing_event_parameters: dict = None) -> None:
+def dither(dither_pattern: str = "random", i: int = 0) -> (float, float):
+    "Return an (x, y) subpixel dither based on the chosen pattern."
+
+    if dither_pattern == "random":
+        np.random.seed()
+        return (np.random.rand() - 0.5, np.random.rand() - 0.5)
+
+    elif dither_pattern == "Anderson_8x8":
+        dx = [0.0, 4.5, 0.0, 4.5, 2.2, 6.7, 2.7, 6.7, 0.0, 4.5, 0.0, 4.5, 2.2, 6.7, 2.2, 6.7, \
+              1.1, 5.6, 1.1, 5.6, 3.3, 7.8, 3.3, 7.8, 1.1, 5.6, 1.1, 5.6, 3.3, 7.8, 3.3, 7.8, \
+              0.0, 4.5, 0.0, 4.5, 2.2, 6.7, 2.7, 6.7, 0.0, 4.5, 0.0, 4.5, 2.2, 6.7, 2.2, 6.7, \
+              1.1, 5.6, 1.1, 5.6, 3.3, 7.8, 3.3, 7.8, 1.1, 5.6, 1.1, 5.6, 3.3, 7.8, 3.3, 7.8]
+        dy = [0.0, 0.0, 4.5, 4.5, 0.0, 0.0, 4.5, 4.5, 2.2, 2.2, 6.7, 6.7, 2.2, 2.2, 6.7, 6.7, \
+              0.0, 0.0, 4.5, 4.5, 0.0, 0.0, 4.5, 4.5, 2.2, 2.2, 6.7, 6.7, 2.2, 2.2, 6.7, 6.7, \
+              1.1, 1.1, 5.6, 5.6, 1.1, 1.1, 5.6, 5.6, 3.3, 3.3, 7.8, 7.8, 3.3, 3.3, 7.8, 7.8, \
+              1.1, 1.1, 5.6, 5.6, 1.1, 1.1, 5.6, 5.6, 3.3, 3.3, 7.8, 7.8, 3.3, 3.3, 7.8, 7.8]
+        dxi = dx[i] % 64
+        dyi = dy[i] % 64
+        return dxi, dyi
+
+    raise ValueError(f'dither pattern {dither_pattern} not recognized')
+
+
+def make_image(i: int, delta_t: float, file_root: str, star_table: table.Table, ra: float, dec: float,
+               dither_pattern: str = "random", microlensing_event_parameters: dict = None) -> None:
     """Make a single image with romanisim."""
 
-    cat = synthpop_to_romanisim(star_table, delta_t)
+    with open(f'{file_root}.log', 'w', buffering=1) as f:
+        with redirect_stdout(f):
 
-    if microlensing_event_parameters is not None:
-        cat = insert_microlensing_events(cat, delta_t*60*24*365.25, microlensing_event_parameters)
-    rng = UniformDeviate(None)
+            cat = synthpop_to_romanisim(star_table, delta_t)
 
-    # Random dither
-    roman_pixel_scale = u.pixel_scale(0.11 * u.arcsec / u.pixel)
-    np.random.seed()
-    dx_pixels, dy_pixels = dither_rms_pixels * np.random.randn(2)
-    d_ra = (dx_pixels * u.pixel).to(u.degree, roman_pixel_scale) / np.cos(dec * u.degree)
-    d_dec = (dy_pixels * u.pixel).to(u.degree, roman_pixel_scale)
-    print(f"dither: ({dx_pixels}, {dy_pixels}) pixels,   ({d_ra.value}, {d_dec.value}) degrees")
+            if microlensing_event_parameters is not None:
+                cat = insert_microlensing_events(cat, delta_t, microlensing_event_parameters)
 
-    # Create persistence object - not needed?
-    persist = persistence.Persistence()
+            # Random dither
+            roman_pixel_scale = u.pixel_scale(ROMAN_PIXEL_ARCSEC_PER_PIXEL * u.arcsec / u.pixel)
+            dx_pixels, dy_pixels = dither(dither_pattern)
+            d_ra = (dx_pixels * u.pixel).to(u.degree, roman_pixel_scale) / np.cos(dec * u.degree)
+            d_dec = (dy_pixels * u.pixel).to(u.degree, roman_pixel_scale)
+            print(f"dither: ({dx_pixels}, {dy_pixels}) pixels,   ({d_ra.value}, {d_dec.value}) degrees")
 
-    args = simulate_args(ra, dec, f'{file_root}.asdf')
+            # Create persistence object - not needed?
+            persist = persistence.Persistence()
 
-    metadata = ris.set_metadata(
-        date=args.date, bandpass=args.bandpass,
-        sca=args.sca, ma_table_number=args.ma_table_number,
-        truncate=args.truncate)
+            args = simulate_args(ra, dec, f'{file_root}.asdf')
 
-    coord = SkyCoord(ra=args.radec[0] * u.deg + d_ra, dec=args.radec[1] * u.deg + d_dec, frame='icrs')
-    wcs.fill_in_parameters(metadata, coord, boresight=args.boresight, pa_aper=args.roll)
+            metadata = ris.set_metadata(
+                date=args.date, bandpass=args.bandpass,
+                sca=args.sca, ma_table_number=args.ma_table_number,
+                truncate=args.truncate)
 
-    # Simulate image and write to file in asdf format
-    ris.simulate_image_file(args, metadata, cat, rng, persist)
+            coord = SkyCoord(ra=args.radec[0] * u.deg + d_ra, dec=args.radec[1] * u.deg + d_dec, frame='icrs')
+            wcs.fill_in_parameters(metadata, coord, boresight=args.boresight, pa_aper=args.roll)
 
-    # Also write the image in FITS format
-    asdf_to_fits(f'{file_root}.asdf', f'{file_root}.fits')
+            # Simulate image and write to file in asdf format
+            rng = UniformDeviate(None)
+            ris.simulate_image_file(args, metadata, cat, rng, persist)
+
+            # Also write the image in FITS format
+            asdf_to_fits(f'{file_root}.asdf', f'{file_root}.fits')
+
+            sys.stdout.flush()
 
 
 if __name__ == '__main__':
 
+    if len(sys.argv) < 2:
+        print("Usage: python make_synthpop_image.py config.json")
+        sys.exit(1)
+
     config_file = sys.argv[1]
 
-    with open(config_file) as file:
-        config_data = json.load(file)
-
-    # Run synthpop
-    model = synthpop.SynthPop(config_file, overwrite=True)
-    model.init_populations()
-    model.process_all()
-    print('synthpop output_location:', model.parms.output_location)
-
-    # Set offset time epochs
-    n_images, cadence_minutes = config_data["delta_t_minutes"]
-    t_minutes = np.arange(n_images) * cadence_minutes
-    t_years = t_minutes / (60 * 24 * 365.25)
+    try:
+        with open(config_file) as file:
+            config_data = json.load(file)
+    except FileNotFoundError:
+        print(f"Config file {config_file} not found.")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        print(f"Invalid JSON in config file {config_file}.")
+        sys.exit(1)
 
     # Centre-of-field coordinates for romanisim
-    gal_l = config_data["l_set"][0]
-    gal_b = config_data["b_set"][0]
+    gal_l = config_data["SIGHTLINES"]["l_set"][0]
+    gal_b = config_data["SIGHTLINES"]["b_set"][0]
     c = SkyCoord(l=gal_l * u.degree, b=gal_b * u.degree, frame=Galactic)
     c_cel = c.fk5
-    ra_rom = c_cel.ra + coordinate_offset['ra']
-    dec_rom = c_cel.dec + coordinate_offset['dec']
+    ra_rom = c_cel.ra + COORDINATE_OFFSET_RA_DEG * u.degree
+    dec_rom = c_cel.dec + COORDINATE_OFFSET_DEC_DEG * u.degree
+
+    # Run synthpop if catalogue doesn't yet exist
+    synthpop_cat_file = \
+        f'{config_data["OUTPUT"]["output_location"]}/{config_data["MANDATORY"]["model_name"]}_l{gal_l:.3f}_b{gal_b:.3f}.csv'
+    csv_used_columns = ['W146', 'l', 'b', 'Dist', 'mul', 'mub']
+    try:
+        df = pd.read_csv(synthpop_cat_file, usecols=csv_used_columns)
+    except FileNotFoundError:
+        model = synthpop.SynthPop(config_file, overwrite=True)
+        model.init_populations()
+        model.process_all()
+        print('synthpop output_location:', model.parms.output_location)
+        df = pd.read_csv(synthpop_cat_file, usecols=csv_used_columns)
+
+    # Set offset time epochs
+    n_images, cadence_minutes = config_data["IMAGES"]["delta_t_minutes"]
+    t_minutes = np.arange(n_images) * cadence_minutes
+    t_years = t_minutes / MINUTES_PER_YEAR
 
     # Read synthpop output catalogue
-    synthpop_cat_file = \
-        f'{output_dir_root}/{config_data["name_for_output"]}/{config_data["model_name"]}_l{gal_l:.3f}_b{gal_b:.3f}.csv'
-    df = pd.read_csv(synthpop_cat_file)
     synthpop_table = table.Table.from_pandas(df)
     synthpop_table = synthpop_table[~synthpop_table['W146'].mask]
 
     # Configure microlensing events to insert
-    if "microlensing_event_parameters" in config_data:
-        ulens_parameters = configure_microlensing_event_parameters(config_data["microlensing_event_parameters"],
+    ulens_parameters = configure_microlensing_event_parameters(
+        config_data["MICROLENSING"]["microlensing_event_parameters"],
+        synthpop_table)
+    try:
+        ulens_parameters = configure_microlensing_event_parameters(config_data["MICROLENSING"]["microlensing_event_parameters"],
                                                                    synthpop_table)
-    else:
+    except KeyError:
         ulens_parameters = None
 
-    # Make images
-    if max_parallel_processes > 1 and n_images > 1:
+    print("ulens_parameters:", ulens_parameters)
 
-        with Pool(max_parallel_processes) as pool:
+    if "dither_pattern" not in config_data["IMAGES"].keys():
+        dither_pattern = "random"
+    else:
+        dither_pattern = config_data["IMAGES"]["dither_pattern"]
+
+    if "output_location" not in config_data["IMAGES"].keys():
+        images_output_location = "."
+    else:
+        images_output_location = config_data["IMAGES"]["output_location"]
+
+    # Make images
+    file_roots = [f'{images_output_location}/{config_data["MANDATORY"]["name_for_output"]}_t{i:04d}' for i in range(n_images)]
+
+    if MAX_PARALLEL_PROCESSES > 1 and n_images > 1:
+
+        n_processes = min(MAX_PARALLEL_PROCESSES, n_images)
+
+        with Pool(n_processes) as pool:
             pool.starmap(partial(make_image, star_table=synthpop_table, ra=ra_rom.value, dec=dec_rom.value,
-                                 dither_rms_pixels=1.0, microlensing_event_parameters=ulens_parameters),
-                         zip(t_years, [f'{config_data["name_for_output"]}_t{i:04d}' for i in range(n_images)]))
+                                 dither_pattern=dither_pattern, microlensing_event_parameters=ulens_parameters),
+                         zip(range(len(t_years)), t_years, file_roots))
 
     else:
 
-        for i, t in enumerate(t_years):
-            make_image(t, f'{config_data["name_for_output"]}_t{i:04d}', synthpop_table, ra_rom.value, dec_rom.value,
-                       dither_rms_pixels=1.0, microlensing_event_parameters=ulens_parameters)
+        for i, (t, file_root) in enumerate(zip(t_years, file_roots)):
+            make_image(i, t, file_root, synthpop_table, ra_rom.value, dec_rom.value,
+                       dither_pattern=dither_pattern, microlensing_event_parameters=ulens_parameters)
 
