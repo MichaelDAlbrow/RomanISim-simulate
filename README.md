@@ -2,7 +2,7 @@
 
 Simulate images for the Nancy Grace Roman Space Telescope Time-Domain Survey.
 
-This code uses synthpop and RomanISIM/WebbPSF to generate time-series simulated
+This code uses synthpop and RomanISIM/STPSF to generate time-series simulated
 images from Roman. 
 
 A star catalog is first generated using synthpop. Then, a series of images (for detector SCA1)
@@ -42,23 +42,63 @@ can find your synthpop installation directory.
 Prepare a synthpop json configuration file similar to
 
 ```json
-{
-    "model_base_name" : "my_generated_model",
-    "l_set" : [0],
-    "b_set" : [-1],
-    "solid_angle" : 3e-3,
-    "model_name" : "besancon_Robin2003",
-    "evolution_class" : {"name" : "MIST", "interpolator" : "CharonInterpolator"},
-    "extinction_map_kwargs" : {"name":"Marshall"},
-    "extinction_law_kwargs" : {"name":"ODonnellCardelli"},
-    "delta_t_minutes" :  [192, 15],
-    "microlensing_event_parameters" : {
-        "mag_bin_edges" : [20, 21, 22, 23, 24, 25, 26],
-        "events_u0_per_mag_bin" : [[40, 0.1], [40, 0.01], [40, 0.001]],
-        "t_E_mins" : 288,
-        "t0_mins" : 2160
-  }
+{   "SEED":{"random_seed":null},
+
+    "MANDATORY":{
+        "#comment1": "directory and base for the output files",
+        "model_name":"Huston2025",
+        "#comment2": "directory containing population json files",
+        "name_for_output":"Huston2025"
+    },
+
+    "SIGHTLINES":
+        {
+            "l_set": [0.5], "l_set_type":"list",
+            "b_set":[1.5], "b_set_type":"list",
+            "solid_angle": 2.7e-2, "solid_angle_unit": "deg^2"
+        },
+
+    "EXTINCTION_MAP":
+        {
+        "extinction_map_kwargs": {"name":"Surot", "project_3d":true, "dist_2d":8.15},
+        "extinction_law_kwargs": [{"name":"SODC", "R_V":2.5}]
+        },
+
+    "POPULATION_GENERATION":{
+        "skip_lowmass_stars": false
+    },
+
+    "PHOTOMETRIC_OUTPUTS":{
+        "maglim":["W146", 99, "keep"],
+        "chosen_bands": ["R062","Z087","Y106","J129","W146","H158","F184", "Bessell_U", "Bessell_B", "Bessell_V", "Bessell_R", "Bessell_I", "VISTA_J", "VISTA_H", "VISTA_Ks"]
+    },
+
+    "OUTPUT":{
+        "post_processing_kwargs": [{"name":"ProcessDarkCompactObjects", "remove":false},
+                {"name":"ConvertMistMags", "conversions":{"AB": ["R062", "Z087", "Y106", "J129", "W146", "H158", "F184"]}},
+                {"name":"RenameColumns",
+                    "old_names":["log_L", "log_Teff", "log_g", "[Fe/H]","log_R"],
+                    "new_names":["logL", "logTeff", "logg" ,"Fe/H_evolved","log_radius"]}],
+
+        "output_location":"outputfiles/lens",
+        "output_filename_pattern": "{name_for_output}_l{l_deg:.3f}_b{b_deg:.3f}",
+
+        "overwrite": true
+    },
+
+    "IMAGES": {
+        "delta_t_minutes": [2, 15]
+        },
+
+    "MICROLENSING": {
+        "microlensing_event_parameters": {
+            "mag_bin_edges": [20, 21, 22, 23, 24, 25, 26]},
+            "events_u0_per_mag_bin": [[200, 0.1], [200, 0.01], [200, 0.001]],
+            "t_E_mins": 400,
+            "t0_mins": 2160
+        }
 }
+
 ```
 
 This is more-or-less the same as a standard synthpop config file, except only the
