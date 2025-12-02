@@ -93,7 +93,6 @@ output_dir_root = '/home/users/mda45/local/data/synthpop/outputfiles/'
 
 
 
-
 # Modules we will need
 import sys
 import os
